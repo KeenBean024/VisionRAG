@@ -12,6 +12,8 @@ import torch
 import os
 from pdf2image import convert_from_path
 import traceback
+import io
+import base64
 ################### Setup logger ############################
 structlog.configure(
     processors=[
@@ -169,10 +171,10 @@ def upload_pdf():
         
         # Store in HDF5
         store_vector(filename, page_embeddings, images)
-        return jsonify({"status": "Document processed", "code": 200})
+        return jsonify({"status": "Document processed"}), 200
     except Exception as e:
         logger.error(f"Error processing document: {e}")
-        return jsonify({"status": "Error processing document", "error": str(e), "code": 500, "trace": traceback.format_exc()})
+        return jsonify({"status": "Error processing document", "error": str(e), "trace": traceback.format_exc()}), 500
     
 def generate_answer(query, images):
     """
@@ -233,27 +235,37 @@ def handle_query():
     generate_answer function to generate a text response based on the query and the
     retrieved image.
     """
-    data = request.json
-    filename = data['filename']
-    query = data['query']
-    # Retrieve with adapter switching
-    query_embedding = process_query(query)
-    
-    image_embedding, images = get_data_by_filename(filename)
-    
-    # Compute scores between the query embedding and the image embeddings
-    scores = processor_retrieval.score_multi_vector(
-        torch.from_numpy(query_embedding), 
-        torch.from_numpy(image_embedding)
-    )
-    
-    # Get the index of the top-scoring page
-    top_pages = scores.numpy()[0].argsort()[-RETRIEVE_K:][::-1]
-    
-    # Generate an answer based on the query and the top-scoring page
-    answer = generate_answer(query, images[top_pages][0])
-    
-    return jsonify({"query": query, "answer": answer[0]})
+    try:
+        data = request.json
+        filename = data['filename']
+        query = data['query']
+        # Retrieve with adapter switching
+        query_embedding = process_query(query)
+        
+        image_embedding, images = get_data_by_filename(filename)
+        
+        # Compute scores between the query embedding and the image embeddings
+        scores = processor_retrieval.score_multi_vector(
+            torch.from_numpy(query_embedding), 
+            torch.from_numpy(image_embedding)
+        )
+        
+        # Get the index of the top-scoring page
+        top_pages = scores.numpy()[0].argsort()[-RETRIEVE_K:][::-1]
+        
+        # Generate an answer based on the query and the top-scoring page
+        answer = generate_answer(query, images[top_pages])
+        
+        encoded_images = [pil_to_base64(images[i]) for i in top_pages]
+        
+        return jsonify({
+        "query": query,
+        "answer": answer[0],
+        "pages": encoded_images  # List of base64 strings
+        }), 200
+    except Exception as e:
+        logger.error(f"Error processing query: {e}")
+        return jsonify({"status": "Error processing query", "error": str(e), "trace": traceback.format_exc()}), 500
 
 @app.route('/filenames', methods=['GET'])
 def get_filenames():
@@ -264,6 +276,12 @@ def get_filenames():
     with h5py.File(os.path.join('data','knowledge_base.h5'), 'r') as f:
         filenames = list(f.keys())
     return jsonify({"filenames": filenames})
+
+def pil_to_base64(img):
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("utf-8")
 
 # if __name__ == '__main__':
 #     app.run(host="0.0.0.0", port=5000, debug=True)
