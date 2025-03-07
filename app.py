@@ -47,6 +47,8 @@ model = cast(
 
 ################### Setup Flask app ############################
 app = Flask(__name__)
+IMAGE_HEIGHT = int(os.environ.get("IMAGE_HEIGHT", 125))
+RETRIEVE_K = int(os.environ.get("RETRIEVE_K", 1))
 
 def process_pdf(file_path):
     """
@@ -59,7 +61,7 @@ def process_pdf(file_path):
         torch.Tensor: The embeddings of the pages in the PDF as a tensor with shape (num_pages, embedding_dim).
     """
     images = convert_from_path(file_path)
-    images = [scale_image(image, new_height=125) for image in images]
+    images = [scale_image(image, new_height=IMAGE_HEIGHT) for image in images]
     
     model.enable_retrieval()
     data = processor_retrieval.process_images(images)
@@ -231,11 +233,9 @@ def handle_query():
     generate_answer function to generate a text response based on the query and the
     retrieved image.
     """
-    logger.warn(request.form)
-    data = request.form
+    data = request.json
     filename = data['filename']
     query = data['query']
-    retrieve_k = int(data.get('retrieve_k',1))
     # Retrieve with adapter switching
     query_embedding = process_query(query)
     
@@ -248,13 +248,22 @@ def handle_query():
     )
     
     # Get the index of the top-scoring page
-    top_pages = scores.numpy()[0].argsort()[-retrieve_k:][::-1]
+    top_pages = scores.numpy()[0].argsort()[-RETRIEVE_K:][::-1]
     
     # Generate an answer based on the query and the top-scoring page
     answer = generate_answer(query, images[top_pages][0])
     
     return jsonify({"query": query, "answer": answer[0]})
 
+@app.route('/filenames', methods=['GET'])
+def get_filenames():
+    """
+    Handles a GET request to the '/filenames' endpoint that returns a list of filenames
+    present in the knowledge base HDF5 file.
+    """
+    with h5py.File(os.path.join('data','knowledge_base.h5'), 'r') as f:
+        filenames = list(f.keys())
+    return jsonify({"filenames": filenames})
 
 # if __name__ == '__main__':
 #     app.run(host="0.0.0.0", port=5000, debug=True)

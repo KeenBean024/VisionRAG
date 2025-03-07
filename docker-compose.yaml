@@ -1,10 +1,34 @@
-  version: '3'
-  services:
-    backend:
-      build: .
-      ports:
-        - "5000:5000"
-    frontend:
-      build: .
-      ports:
-        - "8501:8501"
+version: '3'
+services:
+  backend:
+    build: 
+      context: .
+      dockerfile: backend.Dockerfile
+    ports:
+      - "5000:5000"
+    networks:
+      - app-network
+    volumes:
+      - ./data:/data
+      - ./uploads:/uploads
+    environment:
+      - IMAGE_HEIGHT = 125
+      - RETRIEVE_K = 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+  frontend:
+    build: 
+      context: .
+      dockerfile: frontend.Dockerfile
+    ports:
+      - "8501:8501"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
