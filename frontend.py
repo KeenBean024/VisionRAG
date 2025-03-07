@@ -8,11 +8,11 @@ query = st.text_input("Enter your question")
 
 if pdf_file:
     if st.button("Process Document"):
-        requests.post("http://localhost:5000/upload", files={'pdf': pdf_file})
+        requests.post("http://backend:5000/upload", files={'pdf': pdf_file})
         st.success("Document processed!")
 
 if query and pdf_file:
-    response = requests.post("http://localhost:5000/query", json={
+    response = requests.post("http://backend:5000/query", json={
         'filename': pdf_file.name,
         'query': query
     })
