@@ -12,7 +12,8 @@ import torch
 import os
 from pdf2image import convert_from_path
 import traceback
-import io
+import numpy as np
+import cv2
 import base64
 ################### Setup logger ############################
 structlog.configure(
@@ -256,12 +257,13 @@ def handle_query():
         # Generate an answer based on the query and the top-scoring page
         answer = generate_answer(query, images[top_pages])
         
-        encoded_images = [pil_to_base64(images[i]) for i in top_pages]
+        encoded_images = [ndarray_to_base64(images[i]) for i in top_pages]
         
         return jsonify({
         "query": query,
         "answer": answer[0],
-        "pages": encoded_images  # List of base64 strings
+        "pages": encoded_images,  # List of base64 strings
+        "top_pages": top_pages.tolist()
         }), 200
     except Exception as e:
         logger.error(f"Error processing query: {e}")
@@ -277,11 +279,26 @@ def get_filenames():
         filenames = list(f.keys())
     return jsonify({"filenames": filenames})
 
-def pil_to_base64(img):
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode("utf-8")
+def ndarray_to_base64(ndarr: np.ndarray, image_format: str = 'png') -> str:
+    """
+    Convert a NumPy ndarray (image) to a base64 encoded string.
+    
+    Args:
+        ndarr (np.ndarray): The input image as a NumPy array.
+        image_format (str): Format to encode the image (default is 'png').
+        
+    Returns:
+        str: The base64 encoded string of the image.
+    """
+    # Encode the numpy array into the specified image format
+    success, buffer = cv2.imencode(f'.{image_format}', ndarr)
+    if not success:
+        raise ValueError("Failed to encode image")
+    
+    # Convert buffer to bytes and then encode to base64 string
+    img_bytes = buffer.tobytes()
+    base64_str = base64.b64encode(img_bytes).decode('utf-8')
+    return base64_str
 
 # if __name__ == '__main__':
 #     app.run(host="0.0.0.0", port=5000, debug=True)
