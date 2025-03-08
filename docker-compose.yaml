@@ -14,6 +14,7 @@ services:
     environment:
       - IMAGE_HEIGHT=255
       - RETRIEVE_K=1
+      - BATCH_SIZE=2
       - NVIDIA_VISIBLE_DEVICES=all
     runtime: nvidia
     # deploy:

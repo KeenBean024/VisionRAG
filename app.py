@@ -47,7 +47,7 @@ model = cast(
         device_map=device,
     ),
 )
-
+model.eval()
 ################### Setup Flask app ############################
 app = Flask(__name__)
 IMAGE_HEIGHT = int(os.environ.get("IMAGE_HEIGHT", 125))
