@@ -29,6 +29,7 @@ logger = structlog.get_logger()
 
 model_name = "vidore/colqwen2-v1.0"
 device = get_torch_device("auto")
+torch.cuda.empty_cache()
 
 logger.warn(f"Using device: {device}")
 # Get the LoRA config from the pretrained retrieval model
@@ -53,13 +54,20 @@ app = Flask(__name__)
 IMAGE_HEIGHT = int(os.environ.get("IMAGE_HEIGHT", 125))
 RETRIEVE_K = int(os.environ.get("RETRIEVE_K", 1))
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 4))
+SCALE_IMAGE = os.environ.get("SCALE_IMAGE", "true").lower() == "true"
+logger.warn(f"Using image scaling: {SCALE_IMAGE}")
+logger.warn(f"Using batch size: {BATCH_SIZE}")
+logger.warn(f"Using retrieve k: {RETRIEVE_K}")
+logger.warn(f"Using image height: {IMAGE_HEIGHT}")
+
 def process_pdf(file_path):
     """
     Process a PDF file by extracting its pages and running them through ColQwen2 for retrieval.
     Processes pages in batches to reduce peak GPU memory usage.
     """
     images = convert_from_path(file_path)
-    images = [scale_image(image, new_height=IMAGE_HEIGHT) for image in images]
+    if SCALE_IMAGE:
+        images = [scale_image(image, new_height=IMAGE_HEIGHT) for image in images]
     
     all_embeddings = []
     for i in range(0, len(images), BATCH_SIZE):
