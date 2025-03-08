@@ -7,7 +7,10 @@ RUN apt-get update && apt-get install -y \
     libhdf5-dev \
     gcc \
     g++ \
-    poppler-utils
+    poppler-utils \
+    ffmpeg \
+    libsm6 \
+    libxext6 
 
 COPY requirements.txt .
 RUN pip install --upgrade pip

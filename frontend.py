@@ -41,7 +41,7 @@ elif view_option == "Query Document":
                     if response.ok:
                         data = response.json()
                         st.markdown(f"**Answer:** {data['answer']}")
-                        for idx, b64_img in enumerate(data.get("pages", [])):
+                        for idx, b64_img in zip(data.get("top_pages", []), data.get("pages", [])):
                             # Prepend the header for PNG images so st.image recognizes the format
                             image_data = f"data:image/png;base64,{b64_img}"
                             st.image(image_data, caption=f"Page {idx+1}")
