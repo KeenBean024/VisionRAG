@@ -1,4 +1,4 @@
-version: '3'
+version: '2.4'
 services:
   backend:
     build: 
@@ -12,13 +12,15 @@ services:
       - ./data:/data
       - ./uploads:/uploads
     environment:
-      - IMAGE_HEIGHT = 125
-      - RETRIEVE_K = 1
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
+      - IMAGE_HEIGHT=255
+      - RETRIEVE_K=1
+      - NVIDIA_VISIBLE_DEVICES=all
+    runtime: nvidia
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
 
   frontend:
     build: 
