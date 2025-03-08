@@ -52,26 +52,31 @@ model = cast(
 app = Flask(__name__)
 IMAGE_HEIGHT = int(os.environ.get("IMAGE_HEIGHT", 125))
 RETRIEVE_K = int(os.environ.get("RETRIEVE_K", 1))
-
+BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 4))
 def process_pdf(file_path):
     """
     Process a PDF file by extracting its pages and running them through ColQwen2 for retrieval.
-
-    Args:
-        file_path (str): Path to the PDF file.
-
-    Returns:
-        torch.Tensor: The embeddings of the pages in the PDF as a tensor with shape (num_pages, embedding_dim).
+    Processes pages in batches to reduce peak GPU memory usage.
     """
     images = convert_from_path(file_path)
     images = [scale_image(image, new_height=IMAGE_HEIGHT) for image in images]
     
-    model.enable_retrieval()
-    data = processor_retrieval.process_images(images)
-    with torch.no_grad():
-        batch_doc = {k: v.to(model.device) for k, v in data.items()}
-        embeddings_doc = model(**batch_doc)
-    return images, embeddings_doc.cpu().float().numpy()
+    all_embeddings = []
+    for i in range(0, len(images), BATCH_SIZE):
+        batch_images = images[i:i+BATCH_SIZE]
+        model.enable_retrieval()
+        data = processor_retrieval.process_images(batch_images)
+        with torch.no_grad():
+            batch_doc = {k: v.to(model.device) for k, v in data.items()}
+            embeddings = model(**batch_doc)
+        all_embeddings.append(embeddings.cpu().float().numpy())
+        # Clear intermediate variables and free GPU memory
+        del data, batch_doc, embeddings
+        torch.cuda.empty_cache()
+        
+    # Concatenate embeddings from all batches
+    page_embeddings = np.concatenate(all_embeddings, axis=0)
+    return images, page_embeddings
 
 def process_query(query):
     """
@@ -176,7 +181,13 @@ def upload_pdf():
     except Exception as e:
         logger.error(f"Error processing document: {e}")
         return jsonify({"status": "Error processing document", "error": str(e), "trace": traceback.format_exc()}), 500
-    
+    finally:
+        try:
+            del images, page_embeddings
+        except:
+            pass
+        torch.cuda.empty_cache()
+        
 def generate_answer(query, images):
     """
     Generates an answer to a given query using input images and a Retrieval-Augmented Generation (RAG) model.
@@ -225,6 +236,9 @@ def generate_answer(query, images):
         clean_up_tokenization_spaces=True,
     )
 
+    del inputs_generation, output_ids, generated_ids
+    torch.cuda.empty_cache()
+    
     return output_text
     
     
@@ -268,7 +282,9 @@ def handle_query():
     except Exception as e:
         logger.error(f"Error processing query: {e}")
         return jsonify({"status": "Error processing query", "error": str(e), "trace": traceback.format_exc()}), 500
-
+    finally:
+        torch.cuda.empty_cache()
+    
 @app.route('/filenames', methods=['GET'])
 def get_filenames():
     """
