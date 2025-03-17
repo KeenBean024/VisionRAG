@@ -13,9 +13,9 @@ services:
       - ./uploads:/uploads
     environment:
       - IMAGE_HEIGHT=255
-      - RETRIEVE_K=1
+      - RETRIEVE_K=2
       - BATCH_SIZE=2
-      - SCALE_IMAGE=false
+      - SCALE_IMAGE=true
       - NVIDIA_VISIBLE_DEVICES=all
     runtime: nvidia
     # deploy:

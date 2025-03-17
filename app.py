@@ -15,6 +15,9 @@ import traceback
 import numpy as np
 import cv2
 import base64
+import gc
+from io import BytesIO
+from tqdm import tqdm
 ################### Setup logger ############################
 structlog.configure(
     processors=[
@@ -53,38 +56,96 @@ model.eval()
 app = Flask(__name__)
 IMAGE_HEIGHT = int(os.environ.get("IMAGE_HEIGHT", 125))
 RETRIEVE_K = int(os.environ.get("RETRIEVE_K", 1))
-BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 4))
 SCALE_IMAGE = os.environ.get("SCALE_IMAGE", "true").lower() == "true"
+KNOWLEDGE_BASE = os.path.join('data', "knowledge_base.h5")
+ROW_SIZE = 128  # The last dimension is fixed
+
+# Define a fixed-size array dtype for a row of embedding (128 float32s)
+row_dtype = np.dtype((np.float32, (ROW_SIZE,)))
+# Create a variable-length dtype based on that fixed-size type:
+vlen_float_dtype = h5py.special_dtype(vlen=np.dtype('float32'))
+
+
 logger.warn(f"Using image scaling: {SCALE_IMAGE}")
-logger.warn(f"Using batch size: {BATCH_SIZE}")
 logger.warn(f"Using retrieve k: {RETRIEVE_K}")
 logger.warn(f"Using image height: {IMAGE_HEIGHT}")
 
 def process_pdf(file_path):
     """
-    Process a PDF file by extracting its pages and running them through ColQwen2 for retrieval.
-    Processes pages in batches to reduce peak GPU memory usage.
+    Process a PDF file page by page, extract embeddings, and store embeddings and images in HDF5.
+    Each page's embedding is expected to have shape (1, N, 128); after dropping the batch dimension,
+    we get (N, 128). We then flatten it to a 1D array (of length N*128) and store the number N in a separate dataset.
     """
-    images = convert_from_path(file_path)
-    if SCALE_IMAGE:
-        images = [scale_image(image, new_height=IMAGE_HEIGHT) for image in images]
-    
-    all_embeddings = []
-    for i in range(0, len(images), BATCH_SIZE):
-        batch_images = images[i:i+BATCH_SIZE]
+    print("Starting PDF processing...")
+    images_gen = convert_from_path(file_path)
+
+    with h5py.File(KNOWLEDGE_BASE, 'a') as f:
+        filename = os.path.basename(file_path)
+        if filename in f:
+            del f[filename]
+        group = f.create_group(filename)
+
+        # Create extendable dataset for flattened embeddings.
+        vector_dataset = group.create_dataset(
+            "vectors",
+            shape=(0,),
+            maxshape=(None,),
+            dtype=vlen_float_dtype,
+            compression="gzip"
+        )
+        # Dataset to store the number of rows (N) for each page's embedding.
+        shape_dataset = group.create_dataset(
+            "vector_shapes",
+            shape=(0,),
+            maxshape=(None,),
+            dtype=np.int32,
+            compression="gzip"
+        )
+        # Create extendable dataset for images as variable-length arrays of bytes.
+        image_dtype = h5py.special_dtype(vlen=np.dtype('uint8'))
+        image_dataset = group.create_dataset(
+            "images",
+            shape=(0,),
+            maxshape=(None,),
+            dtype=image_dtype
+        )
         model.enable_retrieval()
-        data = processor_retrieval.process_images(batch_images)
-        with torch.no_grad():
-            batch_doc = {k: v.to(model.device) for k, v in data.items()}
-            embeddings = model(**batch_doc)
-        all_embeddings.append(embeddings.cpu().float().numpy())
-        # Clear intermediate variables and free GPU memory
-        del data, batch_doc, embeddings
-        torch.cuda.empty_cache()
-        
-    # Concatenate embeddings from all batches
-    page_embeddings = np.concatenate(all_embeddings, axis=0)
-    return images, page_embeddings
+
+        for i, image in tqdm(enumerate(images_gen), desc="Processing pages"):
+            if SCALE_IMAGE:
+                image = scale_image(image, new_height=IMAGE_HEIGHT)
+
+            data = processor_retrieval.process_images([image])
+            with torch.no_grad():
+                batch_doc = {k: v.to(model.device) for k, v in data.items()}
+                embedding = model(**batch_doc).cpu().float().numpy()
+            # Drop the redundant batch dimension: expected shape becomes (N, 128)
+            embedding = embedding[0]
+            # print(f"Embedding shape - {embedding.shape}")  # e.g. (779, 128)
+
+            # Flatten the embedding: (N, 128) -> (N*128,)
+            flat_embedding = embedding.flatten()
+
+            # Convert image to compressed JPEG bytes
+            img_buffer = BytesIO()
+            image.save(img_buffer, format="JPEG", quality=75)
+            img_bytes = np.frombuffer(img_buffer.getvalue(), dtype=np.uint8)
+
+            # Extend datasets dynamically
+            vector_dataset.resize((i + 1,))
+            shape_dataset.resize((i + 1,))
+            image_dataset.resize((i + 1,))
+
+            vector_dataset[i] = flat_embedding.tolist()
+            shape_dataset[i] = embedding.shape[0]  # number of rows N
+            image_dataset[i] = img_bytes
+
+            # Cleanup
+            del data, batch_doc, embedding, flat_embedding, image, img_buffer, img_bytes
+            torch.cuda.empty_cache()
+            gc.collect()
+
+    print(f"PDF processing complete. Data stored in group '{filename}'")
 
 def process_query(query):
     """
@@ -103,23 +164,48 @@ def process_query(query):
         embeddings_doc = model(**batch_doc)
     return embeddings_doc.cpu().float().numpy()
 
-def get_data_by_filename(filename):
+def process_image(image):
     """
-    Retrieve vector and image data from the knowledge base HDF5 file for a given filename.
+    Process a image by running it through ColQwen2 for retrieval.
 
     Args:
-        filename (str): The name of the file to look up in the HDF5 knowledge base.
+        image : The image.
 
     Returns:
-        tuple: A tuple containing the vector data and image data if the filename is found,
-               or None if the filename is not present in the knowledge base.
+        torch.Tensor: The embedding of the image as a tensor with shape (1, embedding_dim).
     """
+    data = processor_retrieval.process_images(image)
+    model.enable_retrieval()
+    with torch.no_grad():
+        batch_doc = {k: v.to(model.device) for k, v in data.items()}
+        embeddings_doc = model(**batch_doc)
+    return embeddings_doc.cpu().float().numpy()
 
-    with h5py.File(os.path.join('data','knowledge_base.h5'), 'r') as f:
-        if filename in f:
-            return f[filename]['vector'][()], f[filename]['image'][()]
-        else:
+def get_embeddings_by_filename(filename):
+    with h5py.File(KNOWLEDGE_BASE, 'r') as f:
+        if filename not in f:
             raise ValueError(f"Filename {filename} not found in knowledge base.")
+        group = f[filename]
+        vectors = group['vectors']
+        shapes = group['vector_shapes']
+        embeddings = []
+        # Reconstruct each page's embedding from the flattened data.
+        for i in range(vectors.shape[0]):
+            flat_embedding = np.array(vectors[i], dtype=np.float32)
+            # Retrieve the number of rows (N) stored for this page.
+            N = int(shapes[i])
+            # Reshape flat_embedding (of length N*128) to (N, 128)
+            embedding = flat_embedding.reshape(N, ROW_SIZE)
+            embeddings.append(embedding)
+        return np.array(embeddings)
+
+def get_image_by_filename(filename, page_index):
+    with h5py.File(KNOWLEDGE_BASE, 'r') as f:
+        if filename not in f:
+            raise ValueError(f"Filename {filename} not found in knowledge base.")
+        # Retrieve image bytes for the specified page.
+        img_bytes = bytes(f[filename]['images'][page_index])
+        return Image.open(BytesIO(img_bytes))
 
 def scale_image(image: Image.Image, new_height: int = 1024) -> Image.Image:
     """
@@ -133,36 +219,7 @@ def scale_image(image: Image.Image, new_height: int = 1024) -> Image.Image:
 
     return scaled_image
 
-def store_vector(filename, vector_data, image_data):
-    """
-    Stores the vector data for a given filename in an HDF5 file called 'vectors.h5'.
 
-    Args:
-        filename (str): The filename of the PDF file.
-        vector_data (list): The vector data to store.
-
-    Returns:
-        None
-    """
-    os.makedirs('data', exist_ok=True)
-    with h5py.File(os.path.join('data','knowledge_base.h5'), 'a') as f:
-        # Create a group for each filename if it doesn't exist
-        if filename not in f:
-            group = f.create_group(filename)
-        else:
-            group = f[filename]
-        
-        # Store the vector data
-        if 'vector' in group:
-            del group['vector']  # Delete existing dataset if it exists
-        
-        # Store the vector data
-        if 'image' in group:
-            del group['image']  # Delete existing dataset if it exists
-        group.create_dataset('vector', data=vector_data)
-        group.create_dataset('image', data=image_data)
-    logger.info(f"Stored vector data for {filename} in knowledge base.")
-    
 @app.route('/upload', methods=['POST'])
 def upload_pdf():
     """
@@ -181,10 +238,9 @@ def upload_pdf():
         file.save(os.path.join('uploads', filename))
         
         # Process with ColQwen2 retrieval model
-        images, page_embeddings = process_pdf(os.path.join('uploads', filename))
+        process_pdf(os.path.join('uploads', filename))
         
         # Store in HDF5
-        store_vector(filename, page_embeddings, images)
         return jsonify({"status": "Document processed"}), 200
     except Exception as e:
         logger.error(f"Error processing document: {e}")
@@ -212,12 +268,13 @@ def generate_answer(query, images):
         {
             "role": "user",
             "content": [
-                {
-                    "type": "image",
-                },
+                *[
+                    {"type": "image"}
+                    for _ in images
+                ],
                 {
                     "type": "text",
-                    "text": f"Answer the following question using the input image: {query}",
+                    "text": f"Answer the following question using the input images: {query}",
                 },
             ],
         }
@@ -225,14 +282,14 @@ def generate_answer(query, images):
     text_prompt = processor_generation.apply_chat_template(conversation, add_generation_prompt=True)
     inputs_generation = processor_generation(
         text=[text_prompt],
-        images=[images],
+        images=images,
         padding=True,
         return_tensors="pt",
     ).to(device)
 
     # Generate the RAG response
     model.enable_generation()
-    output_ids = model.generate(**inputs_generation, max_new_tokens=100)
+    output_ids = model.generate(**inputs_generation)
 
     # Ensure that only the newly generated token IDs are retained from output_ids
     generated_ids = [output_ids[len(input_ids) :] for input_ids, output_ids in zip(inputs_generation.input_ids, output_ids)]
@@ -265,7 +322,7 @@ def handle_query():
         # Retrieve with adapter switching
         query_embedding = process_query(query)
         
-        image_embedding, images = get_data_by_filename(filename)
+        image_embedding = get_embeddings_by_filename(filename)
         
         # Compute scores between the query embedding and the image embeddings
         scores = processor_retrieval.score_multi_vector(
@@ -275,9 +332,9 @@ def handle_query():
         
         # Get the index of the top-scoring page
         top_pages = scores.numpy()[0].argsort()[-RETRIEVE_K:][::-1]
-        
+        images = [get_image_by_filename(filename, page) for page in top_pages]
         # Generate an answer based on the query and the top-scoring page
-        answer = generate_answer(query, images[top_pages])
+        answer = generate_answer(query, images)
         
         encoded_images = [ndarray_to_base64(images[i]) for i in top_pages]
         
@@ -292,7 +349,64 @@ def handle_query():
         return jsonify({"status": "Error processing query", "error": str(e), "trace": traceback.format_exc()}), 500
     finally:
         torch.cuda.empty_cache()
-    
+
+@app.route('/query/image', methods=['POST'])
+def handle_query_image():
+    """
+    Handles a POST request to the '/query/image' endpoint that contains a filename and a query.
+    Retrieves the corresponding image data from the HDF5 file and passes it to the
+    generate_answer function to generate a text response based on the query and the
+    retrieved image.
+
+    Args:
+        filename (str): The filename of the PDF document to retrieve images from.
+        query (str): The query string to generate an answer for.
+
+    Returns:
+        A JSON response with a status message of "OK" and the following keys:
+
+        * query (str): The query string.
+        * answer (str): The generated answer.
+        * pages (list[str]): A list of base64 strings, each representing an image retrieved from the PDF.
+        * top_pages (list[int]): The indices of the top-scoring pages in the PDF document.
+    """
+    try:
+        data = request.json
+        filename = data['filename']
+        query = data['query']
+        image = request.files['image']
+        
+        # Retrieve with adapter switching
+        image_embedding = process_image([image])
+        
+        pdf_embedding = get_embeddings_by_filename(filename)
+        
+        # Compute scores between the query embedding and the image embeddings
+        scores = processor_retrieval.score_multi_vector(
+            torch.from_numpy(image_embedding), 
+            torch.from_numpy(pdf_embedding)
+        )
+        
+        # Get the index of the top-scoring page
+        top_pages = scores.numpy()[0].argsort()[-RETRIEVE_K:][::-1]
+        images = [get_image_by_filename(filename, page) for page in top_pages]
+        # Generate an answer based on the query and the top-scoring page
+        answer = generate_answer(query, images)
+        
+        encoded_images = [ndarray_to_base64(images[i]) for i in top_pages]
+        
+        return jsonify({
+        "query": query,
+        "answer": answer[0],
+        "pages": encoded_images,  # List of base64 strings
+        "top_pages": top_pages.tolist()
+        }), 200
+    except Exception as e:
+        logger.error(f"Error processing query: {e}")
+        return jsonify({"status": "Error processing query", "error": str(e), "trace": traceback.format_exc()}), 500
+    finally:
+        torch.cuda.empty_cache()
+        
 @app.route('/filenames', methods=['GET'])
 def get_filenames():
     """
