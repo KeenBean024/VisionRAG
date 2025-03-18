@@ -373,29 +373,35 @@ def handle_query_image():
         * top_pages (list[int]): The indices of the top-scoring pages in the PDF document.
     """
     try:
-        data = request.json
-        filename = data['filename']
-        query = data['query']
+        filename = request.data["filename"]
+        query = request.data["query"]
         image = request.files['image']
-        
+        print("1")
         # Retrieve with adapter switching
         image_embedding = process_image([image])
+        print("2")
         
         pdf_embedding = get_embeddings_by_filename(filename)
+        print("3")
         
         # Compute scores between the query embedding and the image embeddings
         scores = processor_retrieval.score_multi_vector(
             torch.from_numpy(image_embedding), 
             torch.from_numpy(pdf_embedding)
         )
+        print("4")
         
         # Get the index of the top-scoring page
         top_pages = scores.numpy()[0].argsort()[-RETRIEVE_K:][::-1]
         images = [get_image_by_filename(filename, page) for page in top_pages]
+        print("4")
+        
         # Generate an answer based on the query and the top-scoring page
         answer = generate_answer(query, images)
+        print("4")
         
-        encoded_images = [ndarray_to_base64(images[i]) for i in top_pages]
+        encoded_images = [image_to_base64(image) for image in images]
+        print("4")
         
         return jsonify({
         "query": query,
