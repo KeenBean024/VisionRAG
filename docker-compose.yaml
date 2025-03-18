@@ -1,4 +1,4 @@
-version: '2.4'
+version: '3.8'  # Upgrade version to 3.8
 services:
   backend:
     build: 
@@ -12,17 +12,18 @@ services:
       - ./data:/data
       - ./uploads:/uploads
     environment:
-      - IMAGE_HEIGHT=255
+      - IMAGE_HEIGHT=512
       - RETRIEVE_K=2
       - BATCH_SIZE=2
       - SCALE_IMAGE=true
       - NVIDIA_VISIBLE_DEVICES=all
-    runtime: nvidia
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   frontend:
     build: 
