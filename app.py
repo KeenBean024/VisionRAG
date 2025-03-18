@@ -289,7 +289,7 @@ def generate_answer(query, images):
 
     # Generate the RAG response
     model.enable_generation()
-    output_ids = model.generate(**inputs_generation)
+    output_ids = model.generate(**inputs_generation, max_length=1024, early_stopping=True,  do_sample=True)
 
     # Ensure that only the newly generated token IDs are retained from output_ids
     generated_ids = [output_ids[len(input_ids) :] for input_ids, output_ids in zip(inputs_generation.input_ids, output_ids)]
