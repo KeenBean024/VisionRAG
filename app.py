@@ -274,7 +274,7 @@ def generate_answer(query, images):
                 ],
                 {
                     "type": "text",
-                    "text": f"You are a highly intelligent reasoning assistant. Your task is to carefully analyze the images provided, extract relevant data, and use logical step-by-step calculations to answer the QUESTION accurately. When solving mathematical problems, break them down into clear steps, show intermediate reasoning, and ensure correctness before presenting the final answer. Now, answer the following QUESTION: {query}",
+                    "text": f"You are an intelligent reasoning assistant. Analyze the provided images, extract relevant data, and apply logical step-by-step reasoning to answer the QUESTION accurately. For math problems, show clear intermediate steps before giving the final answer. Now, answer: {query}",
                 },
             ],
         }
@@ -284,12 +284,13 @@ def generate_answer(query, images):
         text=[text_prompt],
         images=images,
         padding=True,
+        max_length=4096,
         return_tensors="pt",
     ).to(device)
 
     # Generate the RAG response
     model.enable_generation()
-    output_ids = model.generate(**inputs_generation, max_length=1024, early_stopping=True,  do_sample=True)
+    output_ids = model.generate(**inputs_generation, max_new_tokens=512, early_stopping=False,  do_sample=True)
 
     # Ensure that only the newly generated token IDs are retained from output_ids
     generated_ids = [output_ids[len(input_ids) :] for input_ids, output_ids in zip(inputs_generation.input_ids, output_ids)]
