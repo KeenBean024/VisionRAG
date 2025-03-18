@@ -414,7 +414,7 @@ def get_filenames():
     Handles a GET request to the '/filenames' endpoint that returns a list of filenames
     present in the knowledge base HDF5 file.
     """
-    with h5py.File(os.path.join('data','knowledge_base.h5'), 'r') as f:
+    with h5py.File(KNOWLEDGE_BASE, 'r') as f:
         filenames = list(f.keys())
     return jsonify({"filenames": filenames})
 
