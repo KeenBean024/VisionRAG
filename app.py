@@ -57,7 +57,7 @@ app = Flask(__name__)
 IMAGE_HEIGHT = int(os.environ.get("IMAGE_HEIGHT", 125))
 RETRIEVE_K = int(os.environ.get("RETRIEVE_K", 1))
 SCALE_IMAGE = os.environ.get("SCALE_IMAGE", "true").lower() == "true"
-KNOWLEDGE_BASE = os.path.join('data', "knowledge_base.h5")
+KNOWLEDGE_BASE = os.path.join('/data', "knowledge_base.h5")
 ROW_SIZE = 128  # The last dimension is fixed
 
 # Define a fixed-size array dtype for a row of embedding (128 float32s)
@@ -274,7 +274,7 @@ def generate_answer(query, images):
                 ],
                 {
                     "type": "text",
-                    "text": f"Answer the following question using the input images: {query}",
+                    "text": f"You are a highly intelligent reasoning assistant. Your task is to carefully analyze the images provided, extract relevant data, and use logical step-by-step calculations to answer the QUESTION accurately. When solving mathematical problems, break them down into clear steps, show intermediate reasoning, and ensure correctness before presenting the final answer. Now, answer the following QUESTION: {query}",
                 },
             ],
         }
@@ -322,12 +322,12 @@ def handle_query():
         # Retrieve with adapter switching
         query_embedding = process_query(query)
         
-        image_embedding = get_embeddings_by_filename(filename)
+        pdf_embedding = get_embeddings_by_filename(filename)
         
         # Compute scores between the query embedding and the image embeddings
         scores = processor_retrieval.score_multi_vector(
             torch.from_numpy(query_embedding), 
-            torch.from_numpy(image_embedding)
+            torch.from_numpy(pdf_embedding)
         )
         
         # Get the index of the top-scoring page
@@ -336,7 +336,7 @@ def handle_query():
         # Generate an answer based on the query and the top-scoring page
         answer = generate_answer(query, images)
         
-        encoded_images = [ndarray_to_base64(images[i]) for i in top_pages]
+        encoded_images = [image_to_base64(image) for image in images]
         
         return jsonify({
         "query": query,
@@ -346,6 +346,7 @@ def handle_query():
         }), 200
     except Exception as e:
         logger.error(f"Error processing query: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({"status": "Error processing query", "error": str(e), "trace": traceback.format_exc()}), 500
     finally:
         torch.cuda.empty_cache()
@@ -417,6 +418,12 @@ def get_filenames():
         filenames = list(f.keys())
     return jsonify({"filenames": filenames})
 
+def image_to_base64(image: Image.Image, image_format: str = 'JPEG') -> str:
+    buffered = BytesIO()
+    image.save(buffered, format=image_format)
+    img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+    return img_str
+    
 def ndarray_to_base64(ndarr: np.ndarray, image_format: str = 'png') -> str:
     """
     Convert a NumPy ndarray (image) to a base64 encoded string.
