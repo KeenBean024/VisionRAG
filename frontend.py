@@ -179,4 +179,4 @@ with main:
 
     # Footer
     st.markdown("---")
-    st.markdown("Made with ❤️ by Your Team")
+    st.markdown("Made with ❤️ by KeenBean")
