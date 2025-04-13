@@ -373,8 +373,9 @@ def handle_query_image():
         * top_pages (list[int]): The indices of the top-scoring pages in the PDF document.
     """
     try:
-        filename = request.data["filename"]
-        query = request.data["query"]
+        data = request.data.json
+        filename = data["filename"]
+        query = data["query"]
         image = request.files['image']
         print("1")
         # Retrieve with adapter switching
