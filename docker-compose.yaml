@@ -15,7 +15,7 @@ services:
       - IMAGE_HEIGHT=512
       - RETRIEVE_K=2
       - BATCH_SIZE=2
-      - SCALE_IMAGE=true
+      - SCALE_IMAGE=false
       - NVIDIA_VISIBLE_DEVICES=all
     deploy:
       resources:

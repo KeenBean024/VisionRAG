@@ -113,7 +113,7 @@ with main:
                             st.markdown("### Relevant Pages")
                             for idx, b64_img in zip(data.get("top_pages", []), data.get("pages", [])):
                                 image_data = f"data:image/png;base64,{b64_img}"
-                                st.image(image_data, caption=f"Page {idx+1}", use_column_width=True)
+                                st.image(image_data, caption=f"Page {idx+1}", use_container_width=True)
                         else:
                             st.error("❌ Query failed!")
                     except Exception as e:
@@ -147,7 +147,7 @@ with main:
             with col2:
                 uploaded_image = st.file_uploader("Upload an image", type=['png', 'jpg', 'jpeg'])
                 if uploaded_image:
-                    st.image(uploaded_image, caption="Uploaded Image", use_column_width=True)
+                    st.image(uploaded_image, caption="Uploaded Image", use_container_width=True)
             
             submit_button = st.button("Submit Query", type="primary", disabled=not (query and uploaded_image))
             
@@ -169,7 +169,7 @@ with main:
                             st.markdown("### Relevant Pages")
                             for idx, b64_img in zip(data.get("top_pages", []), data.get("pages", [])):
                                 image_data = f"data:image/png;base64,{b64_img}"
-                                st.image(image_data, caption=f"Page {idx+1}", use_column_width=True)
+                                st.image(image_data, caption=f"Page {idx+1}", use_container_width=True)
                         else:
                             st.error("❌ Query failed!")
                     except Exception as e:

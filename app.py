@@ -274,7 +274,8 @@ def generate_answer(query, images):
                 ],
                 {
                     "type": "text",
-                    "text": f"You are an intelligent reasoning assistant. Analyze the provided images, extract relevant data, and apply logical step-by-step reasoning to answer the QUESTION accurately. For math problems, show clear intermediate steps before giving the final answer. Now, answer: {query}",
+                    "text": f"You are a Question answering bot. Using the multiple image input as context, answer the following QUESTION: {query}",
+                    # "text": f"You are an intelligent reasoning assistant. Analyze the provided images, extract relevant data, and apply logical step-by-step reasoning to answer the QUESTION accurately. For math problems, show clear intermediate steps before giving the final answer. Now, answer: {query}",
                 },
             ],
         }
@@ -373,36 +374,30 @@ def handle_query_image():
         * top_pages (list[int]): The indices of the top-scoring pages in the PDF document.
     """
     try:
-        data = request.data.json
-        filename = data["filename"]
-        query = data["query"]
+        filename = request.form["filename"]
+        query = request.form["query"]
         image = request.files['image']
-        print("1")
+        pil_image = Image.open(image)
+
         # Retrieve with adapter switching
-        image_embedding = process_image([image])
-        print("2")
+        image_embedding = process_image([pil_image])
         
         pdf_embedding = get_embeddings_by_filename(filename)
-        print("3")
         
         # Compute scores between the query embedding and the image embeddings
         scores = processor_retrieval.score_multi_vector(
             torch.from_numpy(image_embedding), 
             torch.from_numpy(pdf_embedding)
         )
-        print("4")
         
         # Get the index of the top-scoring page
         top_pages = scores.numpy()[0].argsort()[-RETRIEVE_K:][::-1]
         images = [get_image_by_filename(filename, page) for page in top_pages]
-        print("4")
         
         # Generate an answer based on the query and the top-scoring page
         answer = generate_answer(query, images)
-        print("4")
         
         encoded_images = [image_to_base64(image) for image in images]
-        print("4")
         
         return jsonify({
         "query": query,
